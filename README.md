@@ -29,7 +29,7 @@ MonitorWatch runs quietly in your menu bar, capturing the context of your workda
 | **Audio** | Meeting transcriptions, voice notes |
 | **Screen Content** | OCR text from screenshots (optional) |
 
-At the end of your day (or on-demand via voice command), all this context is sent to an AI that generates a comprehensive daily note — formatted perfectly for Obsidian with proper frontmatter, tags, and wiki-links.
+At the end of your day (or on-demand via voice command), all this context is sent to an AI that generates a comprehensive daily note — formatted perfectly for Obsidian with tags and wiki-links. Optionally, generate **Hour Notes** for granular tracking of your workday.
 
 ---
 
@@ -76,6 +76,17 @@ Generate daily notes automatically based on your schedule:
 
 **Protection:** Minimum 30-minute cooldown between automatic generations to prevent spam
 
+### Hour Notes
+
+Generate detailed notes for each hour of activity:
+
+- **Automatic generation**: Creates notes every hour when Mac is active
+- **Smart titles**: AI detects the main subject (e.g., "Refactoring CloudAPI Module")
+- **WikiLinks**: Automatically links to related notes in your vault
+- **Organized storage**: Saved to `Hour Notes/YYYY-MM-DD HHh - Subject.md`
+
+Enable in **Settings → Schedule → Hour Notes**.
+
 ### Voice Commands
 
 Say **"faz a nota"** (or customize your trigger phrase) to instantly generate a note. Perfect for:
@@ -96,6 +107,7 @@ MonitorWatch detects when you exit video conferencing apps and can automatically
 - **Self-hosted backend**: Your data goes to YOUR Cloudflare Workers instance
 - **24-hour retention**: All raw data auto-deletes after one day
 - **Granular control**: Ignore any app, block any URL pattern
+- **Smart chunking**: Data processed in 30-min chunks for better context
 
 ---
 
@@ -144,7 +156,9 @@ MonitorWatch detects when you exit video conferencing apps and can automatically
 │                        Obsidian Vault                                │
 │                                                                      │
 │   📁 Daily Notes/                                                    │
-│      └── 2024-01-15.md          ← Auto-generated daily log          │
+│      └── 2024-01-15 19h30 - Development Session.md  ← Daily log     │
+│   📁 Hour Notes/                                                     │
+│      └── 2024-01-15 14h - Refactoring CloudAPI.md   ← Hourly notes  │
 │   📁 Meetings/                                                       │
 │      └── 2024-01-15 - Team Sync.md   ← Meeting minutes              │
 └─────────────────────────────────────────────────────────────────────┘
@@ -328,6 +342,7 @@ On first run, macOS will ask for permissions:
 | Frequency | Disabled | How often to generate daily notes automatically |
 | Scheduled Time | 22:00 | Specific time for daily generation (when "At scheduled time" is selected) |
 | Generate on Sleep | Enabled | Generate note when Mac sleeps or shuts down |
+| Hour Notes | Disabled | Generate separate notes for each hour of activity |
 | Launch at Login | Disabled | Auto-start app when you turn on Mac or log in |
 
 ---
@@ -382,14 +397,9 @@ Uncheck the toggle in Settings → Schedule tab and save.
 ### Daily Log Example
 
 ```markdown
----
-date: 2024-01-15
-type: daily-log
-productivity_score: 8
-mood: focused
----
+# MonitorWatch Development Session #3
 
-# Daily Log: January 15, 2024
+*15/01/2024 - Generated: 2024-01-15 19:30:45*
 
 ## Summary
 
@@ -397,32 +407,58 @@ Deep work session on the #MonitorWatch project. Spent the morning in
 [[Xcode]] refactoring the Settings UI, afternoon on backend deployment. 
 Quick sync with the team about launch timeline.
 
-## Highlights
+## Deliverables & Focus
 
-> [!SUCCESS] Accomplishments
+> [!SUCCESS] Highlights
 > - [x] Redesigned Settings interface
 > - [x] Fixed notification delivery bug  
 > - [x] Deployed backend v2.1
 
-### Technical Details
+### Projects & Tasks
 
-- **Xcode**: SwiftUI Settings view, 3 hours
-- **VS Code**: Workers TypeScript, 2 hours
-- **Safari**: Cloudflare docs, OpenRouter API reference
+- **MonitorWatch**: SwiftUI Settings view refactoring
+- **Backend**: Workers TypeScript deployment
+- **Research**: Cloudflare docs, OpenRouter API reference
 
-## Meetings
+## Meetings & Insights
 
-> [!quote] Team Sync (15 min)
-> Discussed Friday soft launch. Need demo video by Thursday.
+> [!quote] Conversations
+> Team Sync (15 min) - Discussed Friday soft launch. Need demo video by Thursday.
+
+## Learning
+
+- [[SwiftUI]] state management patterns
+- #tech/CloudflareWorkers deployment strategies
 
 ## Reflection
 
-> [!question] Open Questions
+> [!question] Questions
 > - How to improve voice trigger accuracy in noisy environments?
 > - Should we add global keyboard shortcuts?
 
 ---
 *Generated by MonitorWatch*
+```
+
+### Hour Note Example
+
+```markdown
+# Refactoring CloudAPI Module
+
+*Generated: 2024-01-15 14:05:23*
+
+This hour was focused on improving the CloudAPI module in the MonitorWatch 
+macOS app. The main changes involved restructuring the HTTP request handling 
+and adding support for the new hourly summaries endpoint.
+
+Key modifications included updating the post() method to handle the new 
+response format from the backend, and implementing the scanVaultForNotes() 
+function that scans the Obsidian vault for existing notes to enable 
+intelligent WikiLinks.
+
+Related: [[CloudAPI]], [[MonitorWatch Architecture]]
+
+#dev #swift #refactoring
 ```
 
 ### Meeting Notes Example
@@ -513,9 +549,13 @@ monitorwatch/
 │   │       ├── activity.ts     # Activity endpoints
 │   │       ├── transcript.ts   # Transcript endpoints
 │   │       ├── notes.ts        # Note generation
+│   │       ├── summaries.ts    # Hourly summaries processing
 │   │       └── config.ts       # Config endpoints
 │   │
-│   ├── schema.sql              # Database schema
+│   ├── db/
+│   │   ├── schema.sql          # Database schema
+│   │   └── migrations/         # Database migrations
+│   │
 │   ├── wrangler.toml           # Cloudflare config
 │   └── package.json
 │
@@ -572,6 +612,10 @@ monitorwatch/
 
 ## Roadmap
 
+- [x] Hour Notes for granular tracking
+- [x] Intelligent WikiLinks to existing notes
+- [x] Smart chunking (30-min intervals)
+- [x] OCR error correction
 - [ ] iOS companion app for mobile activity
 - [ ] Global keyboard shortcuts
 - [ ] Weekly/monthly summary generation
