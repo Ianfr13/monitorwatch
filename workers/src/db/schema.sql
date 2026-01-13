@@ -1,0 +1,44 @@
+-- MonitorWatch D1 Schema
+
+-- Activities table: stores all captured events
+CREATE TABLE IF NOT EXISTS activities (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  app_bundle_id TEXT,
+  app_name TEXT,
+  window_title TEXT,
+  ocr_text TEXT,
+  capture_mode TEXT CHECK(capture_mode IN ('full', 'screenshot', 'audio', 'metadata')),
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Audio transcripts
+CREATE TABLE IF NOT EXISTS transcripts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  text TEXT,
+  source TEXT,
+  duration_seconds INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Generated notes
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  content TEXT,
+  version INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_activities_user_timestamp ON activities(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_transcripts_user_timestamp ON transcripts(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_notes_user_date ON notes(user_id, date);
+
+-- Unique constraint for one note per user per day
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_unique ON notes(user_id, date);

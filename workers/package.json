@@ -1,0 +1,15 @@
+{
+    "name": "monitorwatch-workers",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "db:migrate": "wrangler d1 execute monitorwatch --file=./src/db/schema.sql"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20240117.0",
+        "typescript": "^5.3.3",
+        "wrangler": "^3.24.0"
+    }
+}
