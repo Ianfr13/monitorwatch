@@ -1,0 +1,27 @@
+# Code Owners
+
+This file defines who is responsible for code in this repository.
+
+# Default Code Owner
+* @ianfr13
+
+# Sections
+
+## Backend (Cloudflare Workers)
+/workers/ @ianfr13
+
+## macOS App
+/macos/ @ianfr13
+
+## Documentation
+/README.md @ianfr13
+/docs/ @ianfr13
+
+## GitHub Actions
+/.github/ @ianfr13
+
+# Notes:
+# - Add `@username` to assign ownership
+# - Use `*` as a wildcard for any user
+# - Lines are evaluated top to bottom, first match wins
+# - See https://docs.github.com/en/repositories/managing-your-repositorys-settings-on-github/about-code-owners
