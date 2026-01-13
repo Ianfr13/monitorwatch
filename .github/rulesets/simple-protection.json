@@ -1,0 +1,22 @@
+{
+  "name": "main-branch-protection",
+  "target": "branch",
+  "enforcement": "active",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    }
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": ["main", "master"],
+      "exclude": []
+    }
+  }
+}
