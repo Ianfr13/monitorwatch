@@ -15,6 +15,7 @@ import { handleGenerateNote, handleGetNote, handleGenerateMeetingNote } from './
 import { handleGetConfig, handleUpdateConfig } from './handlers/config';
 import { handleTranscribe } from './handlers/transcribe';
 import { handleVision } from './handlers/vision';
+import { processHourlySummary, generateHourNote } from './handlers/summaries';
 
 // Rate limiting: Max requests per IP per minute
 const RATE_LIMIT = 60;
@@ -157,6 +158,51 @@ export default {
                 return Response.json(result, { headers: corsHeaders });
             }
 
+            // POST /api/summaries/process - Process hourly summary (called by cron or client)
+            if (path === '/api/summaries/process' && method === 'POST') {
+                const payload = await request.json() as { date: string; hour: number };
+                const openRouterKey = request.headers.get('X-OpenRouter-Key');
+                const language = request.headers.get('X-Note-Language') || 'en';
+                
+                if (!openRouterKey) {
+                    return Response.json({ error: 'OpenRouter key required' }, { status: 400, headers: corsHeaders });
+                }
+                
+                const summary = await processHourlySummary(
+                    userId, 
+                    payload.date, 
+                    payload.hour, 
+                    env, 
+                    openRouterKey,
+                    'google/gemini-2.0-flash-001',
+                    language
+                );
+                return Response.json({ success: true, summary }, { headers: corsHeaders });
+            }
+
+            // POST /api/notes/hour - Generate hour note with WikiLinks
+            if (path === '/api/notes/hour' && method === 'POST') {
+                const payload = await request.json() as { date: string; hour: number; vaultNotes: string[] };
+                const openRouterKey = request.headers.get('X-OpenRouter-Key');
+                const language = request.headers.get('X-Note-Language') || 'en';
+                
+                if (!openRouterKey) {
+                    return Response.json({ error: 'OpenRouter key required' }, { status: 400, headers: corsHeaders });
+                }
+                
+                const { note, title } = await generateHourNote(
+                    userId,
+                    payload.date,
+                    payload.hour,
+                    payload.vaultNotes || [],
+                    env,
+                    openRouterKey,
+                    'google/gemini-2.0-flash-001',
+                    language
+                );
+                return Response.json({ success: true, note, title }, { headers: corsHeaders });
+            }
+
             // GET /api/config - Get user config
             if (path === '/api/config' && method === 'GET') {
                 const result = await handleGetConfig(userId, env);
@@ -218,10 +264,16 @@ export default {
                 `DELETE FROM notes WHERE updated_at < ?`
             ).bind(cutoff).run();
 
+            // Prune Hourly Summaries (keep only last 24h)
+            const resultSummaries = await env.DB.prepare(
+                `DELETE FROM hourly_summaries WHERE created_at < ?`
+            ).bind(cutoff).run();
+
             console.log(`[Cron] Cleanup complete.`);
             console.log(`- Deleted Activities: ${resultActivity.meta.changes}`);
             console.log(`- Deleted Transcripts: ${resultTranscript.meta.changes}`);
             console.log(`- Deleted Notes: ${resultNotes.meta.changes}`);
+            console.log(`- Deleted Summaries: ${resultSummaries.meta.changes}`);
 
         } catch (error) {
             console.error('[Cron] Cleanup failed:', error);

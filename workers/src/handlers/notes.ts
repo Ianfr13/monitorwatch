@@ -3,6 +3,7 @@ import { generateId, isValidDateString, isValidTimestamp, sanitizeString } from 
 import { getActivitiesForDate } from './activity';
 import { getTranscriptsForDate } from './transcript';
 import { generateNoteWithAI, generateMeetingNoteWithAI } from '../ai';
+import { getHourlySummaries, processAllHoursForDate } from './summaries';
 
 // Helper to get AI config from request headers
 function getAIConfigFromRequest(request: Request) {
@@ -25,20 +26,12 @@ export async function handleGenerateNote(
     userId: string,
     env: Env,
     request: Request
-): Promise<{ success: boolean; note: string }> {
-    const { date, force } = payload;
+): Promise<{ success: boolean; note: string; noteNumber: number }> {
+    const { date } = payload;
 
     // Validate date format
     if (!date || !isValidDateString(date)) {
         throw new Error('Invalid date format. Expected YYYY-MM-DD');
-    }
-
-    // Check if note exists and force is not set
-    if (!force) {
-        const existing = await getNote(date, userId, env);
-        if (existing) {
-            return { success: true, note: existing.content };
-        }
     }
 
     // Get activities and transcripts for the date
@@ -56,21 +49,32 @@ export async function handleGenerateNote(
         throw new Error('OpenRouter API key not provided. Configure it in Settings.');
     }
 
-    // Generate note with AI
-    const content = await generateNoteWithAI(activities, transcripts, date, env, aiConfig);
+    // Count existing notes for this date to get next note number
+    const countResult = await env.DB.prepare(`
+        SELECT COUNT(*) as count FROM notes WHERE user_id = ? AND date = ?
+    `).bind(userId, date).first() as { count: number } | null;
+    const noteNumber = (countResult?.count || 0) + 1;
 
-    // Upsert note
+    // Get pre-processed hourly summaries if available
+    let hourlySummaries = await getHourlySummaries(userId, date, env);
+    
+    // If no summaries, process them now (slower but ensures data)
+    if (hourlySummaries.length === 0 && aiConfig?.openRouterKey) {
+        await processAllHoursForDate(userId, date, env, aiConfig.openRouterKey, aiConfig.model, aiConfig.language);
+        hourlySummaries = await getHourlySummaries(userId, date, env);
+    }
+
+    // Generate note with AI using summaries or raw data
+    const content = await generateNoteWithAI(activities, transcripts, date, env, aiConfig, noteNumber, hourlySummaries);
+
+    // Insert new note with note_number
     const id = generateId();
     await env.DB.prepare(`
-    INSERT INTO notes (id, user_id, date, content, version, updated_at)
-    VALUES (?, ?, ?, ?, 1, datetime('now'))
-    ON CONFLICT(user_id, date) DO UPDATE SET
-      content = excluded.content,
-      version = notes.version + 1,
-      updated_at = datetime('now')
-  `).bind(id, userId, date, content).run();
+        INSERT INTO notes (id, user_id, date, note_number, content, version, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, datetime('now'))
+    `).bind(id, userId, date, noteNumber, content).run();
 
-    return { success: true, note: content };
+    return { success: true, note: content, noteNumber };
 }
 
 export async function handleGetNote(
@@ -83,11 +87,22 @@ export async function handleGetNote(
 }
 
 async function getNote(date: string, userId: string, env: Env): Promise<Note | null> {
+    // Get the latest note for the date
     const result = await env.DB.prepare(`
-    SELECT * FROM notes WHERE user_id = ? AND date = ?
-  `).bind(userId, date).first();
+        SELECT * FROM notes WHERE user_id = ? AND date = ?
+        ORDER BY note_number DESC LIMIT 1
+    `).bind(userId, date).first();
 
     return result as Note | null;
+}
+
+async function getNotesForDate(date: string, userId: string, env: Env): Promise<Note[]> {
+    const result = await env.DB.prepare(`
+        SELECT * FROM notes WHERE user_id = ? AND date = ?
+        ORDER BY note_number ASC
+    `).bind(userId, date).all();
+
+    return (result.results || []) as unknown as Note[];
 }
 
 export async function handleGenerateMeetingNote(

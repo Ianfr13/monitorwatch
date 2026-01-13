@@ -15,7 +15,7 @@
   ],
   "conditions": {
     "ref_name": {
-      "include": ["main", "master"],
+      "include": ["refs/heads/main", "refs/heads/master"],
       "exclude": []
     }
   }

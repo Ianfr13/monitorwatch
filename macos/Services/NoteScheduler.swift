@@ -13,11 +13,13 @@ class NoteScheduler {
     static let shared = NoteScheduler()
     
     private var scheduledTimer: Timer?
+    private var hourlySummaryTimer: Timer?
     private var lastGenerationDate: Date?
     private let configManager = ConfigManager.shared
     
     private init() {
         setupSleepWakeNotifications()
+        setupHourlySummaryTimer()
     }
     
     // MARK: - Public API
@@ -30,6 +32,8 @@ class NoteScheduler {
     func stop() {
         scheduledTimer?.invalidate()
         scheduledTimer = nil
+        hourlySummaryTimer?.invalidate()
+        hourlySummaryTimer = nil
         Logger.shared.log("NoteScheduler: Stopped")
     }
     
@@ -103,6 +107,51 @@ class NoteScheduler {
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         Logger.shared.log("NoteScheduler: Scheduled for \(formatter.string(from: scheduledDate)) (\(timeString))")
+    }
+    
+    // MARK: - Hourly Summary Processing
+    
+    private func setupHourlySummaryTimer() {
+        // Calculate time until next hour
+        let now = Date()
+        let calendar = Calendar.current
+        let nextHour = calendar.nextDate(
+            after: now,
+            matching: DateComponents(minute: 5), // 5 minutes past the hour
+            matchingPolicy: .nextTime
+        )!
+        
+        let initialDelay = nextHour.timeIntervalSince(now)
+        
+        // First, schedule initial timer to sync with the hour
+        Timer.scheduledTimer(withTimeInterval: initialDelay, repeats: false) { [weak self] _ in
+            self?.processHourlySummary()
+            
+            // Then set up recurring hourly timer
+            self?.hourlySummaryTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+                self?.processHourlySummary()
+            }
+            if let timer = self?.hourlySummaryTimer {
+                RunLoop.current.add(timer, forMode: .common)
+            }
+        }
+        
+        Logger.shared.log("NoteScheduler: Hourly summary timer scheduled (next: \(nextHour))")
+    }
+    
+    private func processHourlySummary() {
+        Logger.shared.log("NoteScheduler: Processing hourly summary")
+        
+        Task {
+            // First process the summary (for daily note later)
+            await CloudAPI.shared.processLastHourSummary()
+            
+            // Generate hour note only if enabled
+            if configManager.config.hourNotesEnabled {
+                Logger.shared.log("NoteScheduler: Generating hour note")
+                await CloudAPI.shared.generateLastHourNote()
+            }
+        }
     }
     
     // MARK: - Sleep/Wake Detection

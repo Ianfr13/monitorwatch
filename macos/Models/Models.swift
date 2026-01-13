@@ -126,6 +126,7 @@ struct UserConfig: Codable {
     var generateOnSleep: Bool = true  // Generate when Mac goes to sleep
     var scheduledTime: String = "22:00"  // Format: "HH:mm" for scheduled generation
     var launchAtLogin: Bool = false  // Launch app automatically on login
+    var hourNotesEnabled: Bool = false  // Generate hour notes automatically every hour
     
     // AI Provider Configuration
     var aiProvider: String = "gemini"
@@ -157,6 +158,7 @@ struct UserConfig: Codable {
         case generateOnSleep = "generate_on_sleep"
         case scheduledTime = "scheduled_time"
         case launchAtLogin = "launch_at_login"
+        case hourNotesEnabled = "hour_notes_enabled"
         case aiProvider = "ai_provider"
         case openRouterKey = "openrouter_key"
         case geminiKey = "gemini_key"

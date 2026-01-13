@@ -19,4 +19,4 @@ ENVIRONMENT = "production"
 # - API_SECRET_KEY
 
 [triggers]
-crons = ["0 0 * * *"] # Run every day at MN (UTC)
+crons = ["0 * * * *"] # Run every hour

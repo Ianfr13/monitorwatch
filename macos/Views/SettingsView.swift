@@ -212,6 +212,17 @@ struct SettingsView: View {
                         .padding(4)
                     }
                     
+                    GroupBox("Hour Notes") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Enable Hour Notes", isOn: $config.hourNotesEnabled)
+                            
+                            Text("Automatically generate a separate note for each hour of activity. Notes are saved to Hour Notes folder with descriptive titles based on what you worked on.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(4)
+                    }
+                    
                     GroupBox("Status") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
