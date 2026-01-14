@@ -5,11 +5,13 @@ CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  local_date TEXT,              -- YYYY-MM-DD in user's timezone
+  local_hour INTEGER,           -- 0-23 in user's timezone
   app_bundle_id TEXT,
   app_name TEXT,
   window_title TEXT,
   ocr_text TEXT,
-  capture_mode TEXT CHECK(capture_mode IN ('full', 'screenshot', 'audio', 'metadata')),
+  capture_mode TEXT CHECK(capture_mode IN ('full', 'screenshot', 'audio', 'metadata', 'ignore')),
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -18,6 +20,8 @@ CREATE TABLE IF NOT EXISTS transcripts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  local_date TEXT,              -- YYYY-MM-DD in user's timezone
+  local_hour INTEGER,           -- 0-23 in user's timezone
   text TEXT,
   source TEXT,
   duration_seconds INTEGER,
@@ -48,7 +52,9 @@ CREATE TABLE IF NOT EXISTS hourly_summaries (
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_activities_user_timestamp ON activities(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_activities_local_date_hour ON activities(user_id, local_date, local_hour);
 CREATE INDEX IF NOT EXISTS idx_transcripts_user_timestamp ON transcripts(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_transcripts_local_date_hour ON transcripts(user_id, local_date, local_hour);
 CREATE INDEX IF NOT EXISTS idx_notes_user_date ON notes(user_id, date);
 
 -- Unique constraint for one note per user per day per number

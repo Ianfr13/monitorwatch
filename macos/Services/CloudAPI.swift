@@ -26,14 +26,35 @@ class CloudAPI {
     
     // MARK: - Activity
     
+    // Formatters for local date/hour extraction
+    private static let localDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        return formatter
+    }()
+    
+    private static let localHourFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH"
+        formatter.timeZone = TimeZone.current
+        return formatter
+    }()
+    
     func sendActivity(_ activity: Activity) async {
         guard !configManager.config.apiUrl.isEmpty else {
             Logger.shared.error("CloudAPI: API URL not configured")
             return
         }
         
+        // Extract local date and hour for timezone-correct filtering
+        let localDate = CloudAPI.localDateFormatter.string(from: activity.timestamp)
+        let localHour = Int(CloudAPI.localHourFormatter.string(from: activity.timestamp)) ?? 0
+        
         let payload = ActivityPayload(
             timestamp: dateFormatter.string(from: activity.timestamp),
+            localDate: localDate,
+            localHour: localHour,
             appBundleId: activity.appBundleId,
             appName: activity.appName,
             windowTitle: activity.windowTitle,
@@ -54,8 +75,14 @@ class CloudAPI {
     func sendTranscript(_ transcript: Transcript) async {
         guard !configManager.config.apiUrl.isEmpty else { return }
         
+        // Extract local date and hour for timezone-correct filtering
+        let localDate = CloudAPI.localDateFormatter.string(from: transcript.timestamp)
+        let localHour = Int(CloudAPI.localHourFormatter.string(from: transcript.timestamp)) ?? 0
+        
         let payload = TranscriptPayload(
             timestamp: dateFormatter.string(from: transcript.timestamp),
+            localDate: localDate,
+            localHour: localHour,
             text: transcript.text,
             source: transcript.source,
             durationSeconds: transcript.durationSeconds
@@ -204,9 +231,9 @@ class CloudAPI {
         
         do {
             try note.write(toFile: filePath, atomically: true, encoding: .utf8)
-            print("CloudAPI: Meeting Note written - \(filePath)")
+            Logger.shared.log("CloudAPI: Meeting Note written - \(filePath)")
         } catch {
-            print("CloudAPI Error (write meeting): \(error)")
+            Logger.shared.error("CloudAPI Error (write meeting): \(error)")
         }
     }
     
@@ -219,7 +246,7 @@ class CloudAPI {
             let response: NoteResponse = try await get(endpoint: "/api/notes/\(dateString)")
             return response.note
         } catch {
-            print("CloudAPI Error (get note): \(error)")
+            Logger.shared.error("CloudAPI Error (get note): \(error)")
             return nil
         }
     }
@@ -326,6 +353,123 @@ class CloudAPI {
         await generateHourNote(for: date, hour: previousHour)
     }
     
+    // MARK: - Quick Notes
+    
+    /// Result from quick note generation
+    struct QuickNoteResult {
+        let success: Bool
+        let title: String
+    }
+    
+    /// Generate a quick note for the last X minutes
+    func generateQuickNote(minutesBack: Int) async throws -> QuickNoteResult {
+        guard !configManager.config.apiUrl.isEmpty else {
+            throw APIError.serverError(message: "API URL not configured. Go to Settings > Connection.")
+        }
+        guard !configManager.config.apiKey.isEmpty else {
+            throw APIError.serverError(message: "API Key not configured. Go to Settings > Connection.")
+        }
+        guard !configManager.config.openRouterKey.isEmpty else {
+            throw APIError.serverError(message: "OpenRouter API key not configured. Go to Settings > Connection.")
+        }
+        guard !configManager.config.obsidianVaultPath.isEmpty else {
+            throw APIError.serverError(message: "Obsidian vault not selected. Go to Settings > General.")
+        }
+        
+        struct QuickNoteRequest: Codable {
+            let minutesBack: Int
+            let timezoneOffset: Int  // Minutes from UTC (e.g., -180 for GMT-3)
+            let localTime: String    // Current local time "HH:mm"
+            let localDate: String    // Current local date "yyyy-MM-dd"
+        }
+        
+        struct QuickNoteResponse: Codable {
+            let success: Bool
+            let note: String
+            let title: String?
+        }
+        
+        // Get timezone info from macOS
+        let now = Date()
+        let tzOffsetSeconds = TimeZone.current.secondsFromGMT(for: now)
+        let tzOffsetMinutes = tzOffsetSeconds / 60
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        timeFormatter.timeZone = TimeZone.current
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current
+        
+        let response: QuickNoteResponse = try await post(
+            endpoint: "/api/notes/quick",
+            body: QuickNoteRequest(
+                minutesBack: minutesBack,
+                timezoneOffset: tzOffsetMinutes,
+                localTime: timeFormatter.string(from: now),
+                localDate: dateFormatter.string(from: now)
+            )
+        )
+        
+        if response.success && !response.note.isEmpty {
+            let title = response.title ?? "Quick Note"
+            await writeQuickNoteToObsidian(note: response.note, title: title)
+            Logger.shared.api("Quick Note: \(title)", success: true)
+            return QuickNoteResult(success: true, title: title)
+        }
+        
+        return QuickNoteResult(success: false, title: "")
+    }
+    
+    /// Write quick note to Notes/ folder in Obsidian vault
+    private func writeQuickNoteToObsidian(note: String, title: String) async {
+        let vaultPath = (configManager.config.obsidianVaultPath as NSString).expandingTildeInPath
+        
+        // Get current date and time for filename
+        let now = Date()
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let dateString = dateFormatter.string(from: now)
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH'h'mm"
+        let timeString = timeFormatter.string(from: now)
+        
+        // Clean title for filename
+        let cleanTitle = title
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "\\", with: "-")
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "#", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(80)
+        
+        // Format: "Notes/2026-01-13 14h30 - Title Here.md"
+        let filePath = "\(vaultPath)/Notes/\(dateString) \(timeString) - \(cleanTitle).md"
+        
+        // Create directory if needed
+        let directory = (filePath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        
+        // If file exists, append timestamp to make unique
+        var finalPath = filePath
+        if FileManager.default.fileExists(atPath: finalPath) {
+            let secondFormatter = DateFormatter()
+            secondFormatter.dateFormat = "ss"
+            let seconds = secondFormatter.string(from: now)
+            finalPath = "\(vaultPath)/Notes/\(dateString) \(timeString)-\(seconds) - \(cleanTitle).md"
+        }
+        
+        do {
+            try note.write(toFile: finalPath, atomically: true, encoding: .utf8)
+            Logger.shared.log("CloudAPI: Quick note written - \(finalPath)")
+        } catch {
+            Logger.shared.error("CloudAPI Error (write quick note): \(error)")
+        }
+    }
+    
     /// Scan Obsidian vault for existing note titles (for WikiLinks)
     private func scanVaultForNotes() -> [String] {
         let vaultPath = (configManager.config.obsidianVaultPath as NSString).expandingTildeInPath
@@ -426,9 +570,9 @@ class CloudAPI {
         // Write note
         do {
             try note.write(toFile: filePath, atomically: true, encoding: .utf8)
-            print("CloudAPI: Note written to Obsidian - \(filePath)")
+            Logger.shared.log("CloudAPI: Note written to Obsidian - \(filePath)")
         } catch {
-            print("CloudAPI Error (write obsidian): \(error)")
+            Logger.shared.error("CloudAPI Error (write obsidian): \(error)")
         }
     }
     
@@ -436,7 +580,7 @@ class CloudAPI {
     
     private func post<T: Encodable, R: Decodable>(endpoint: String, body: T) async throws -> R {
         guard let url = URL(string: configManager.config.apiUrl + endpoint) else {
-            print("CloudAPI Error: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
+            Logger.shared.error("CloudAPI: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
             throw APIError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -478,7 +622,7 @@ class CloudAPI {
     
     private func post<T: Encodable>(endpoint: String, body: T) async throws {
         guard let url = URL(string: configManager.config.apiUrl + endpoint) else {
-            print("CloudAPI Error: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
+            Logger.shared.error("CloudAPI: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
             throw APIError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -509,11 +653,10 @@ class CloudAPI {
     
     private func get<R: Decodable>(endpoint: String) async throws -> R {
         guard let url = URL(string: configManager.config.apiUrl + endpoint) else {
-            print("CloudAPI Error: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
+            Logger.shared.error("CloudAPI: Invalid URL structure: \(configManager.config.apiUrl + endpoint)")
             throw APIError.invalidResponse
         }
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
         request.httpMethod = "GET"
         let cleanKey = configManager.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         request.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization")

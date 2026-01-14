@@ -11,19 +11,31 @@
 import { Env, ActivityPayload, TranscriptPayload, GenerateNoteRequest, UserConfig } from './types';
 import { handleActivity } from './handlers/activity';
 import { handleTranscript } from './handlers/transcript';
-import { handleGenerateNote, handleGetNote, handleGenerateMeetingNote } from './handlers/notes';
+import { handleGenerateNote, handleGetNote, handleGenerateMeetingNote, handleGenerateQuickNote } from './handlers/notes';
 import { handleGetConfig, handleUpdateConfig } from './handlers/config';
 import { handleTranscribe } from './handlers/transcribe';
 import { handleVision } from './handlers/vision';
 import { processHourlySummary, generateHourNote } from './handlers/summaries';
 
 // Rate limiting: Max requests per IP per minute
+// Note: In production with multiple Workers, consider using Durable Objects or KV for distributed rate limiting
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
+const MAX_MAP_SIZE = 10000; // Prevent unbounded memory growth
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(ip: string): boolean {
     const now = Date.now();
+    
+    // Cleanup old entries periodically to prevent memory leaks
+    if (rateLimitMap.size > MAX_MAP_SIZE) {
+        for (const [key, value] of rateLimitMap.entries()) {
+            if (now > value.resetAt) {
+                rateLimitMap.delete(key);
+            }
+        }
+    }
+    
     const record = rateLimitMap.get(ip);
     
     if (!record || now > record.resetAt) {
@@ -113,14 +125,24 @@ export default {
         try {
             // POST /api/activity - Store activity event
             if (path === '/api/activity' && method === 'POST') {
-                const payload: ActivityPayload = await request.json();
+                let payload: ActivityPayload;
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
                 const result = await handleActivity(payload, userId, env);
                 return Response.json(result, { headers: corsHeaders });
             }
 
             // POST /api/transcript - Store audio transcript
             if (path === '/api/transcript' && method === 'POST') {
-                const payload: TranscriptPayload = await request.json();
+                let payload: TranscriptPayload;
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
                 const result = await handleTranscript(payload, userId, env);
                 return Response.json(result, { headers: corsHeaders });
             }
@@ -139,14 +161,30 @@ export default {
 
             // POST /api/notes/meeting - Generate Meeting Minutes
             if (path === '/api/notes/meeting' && method === 'POST') {
-                const payload = await request.json() as any;
+                let payload: { startTime: string; endTime: string; context: string };
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
+                if (!payload.startTime || !payload.endTime) {
+                    return Response.json({ error: 'startTime and endTime are required' }, { status: 400, headers: corsHeaders });
+                }
                 const result = await handleGenerateMeetingNote(payload, userId, env, request);
                 return Response.json(result, { headers: corsHeaders });
             }
 
             // POST /api/notes/generate - Generate note for a date
             if (path === '/api/notes/generate' && method === 'POST') {
-                const payload: GenerateNoteRequest = await request.json();
+                let payload: GenerateNoteRequest;
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
+                if (!payload.date) {
+                    return Response.json({ error: 'date is required' }, { status: 400, headers: corsHeaders });
+                }
                 const result = await handleGenerateNote(payload, userId, env, request);
                 return Response.json(result, { headers: corsHeaders });
             }
@@ -160,7 +198,21 @@ export default {
 
             // POST /api/summaries/process - Process hourly summary (called by cron or client)
             if (path === '/api/summaries/process' && method === 'POST') {
-                const payload = await request.json() as { date: string; hour: number };
+                let payload: { date: string; hour: number };
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
+                
+                if (!payload.date || payload.hour === undefined) {
+                    return Response.json({ error: 'date and hour are required' }, { status: 400, headers: corsHeaders });
+                }
+                
+                if (payload.hour < 0 || payload.hour > 23) {
+                    return Response.json({ error: 'hour must be between 0 and 23' }, { status: 400, headers: corsHeaders });
+                }
+                
                 const openRouterKey = request.headers.get('X-OpenRouter-Key');
                 const language = request.headers.get('X-Note-Language') || 'en';
                 
@@ -182,7 +234,21 @@ export default {
 
             // POST /api/notes/hour - Generate hour note with WikiLinks
             if (path === '/api/notes/hour' && method === 'POST') {
-                const payload = await request.json() as { date: string; hour: number; vaultNotes: string[] };
+                let payload: { date: string; hour: number; vaultNotes?: string[] };
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
+                
+                if (!payload.date || payload.hour === undefined) {
+                    return Response.json({ error: 'date and hour are required' }, { status: 400, headers: corsHeaders });
+                }
+                
+                if (payload.hour < 0 || payload.hour > 23) {
+                    return Response.json({ error: 'hour must be between 0 and 23' }, { status: 400, headers: corsHeaders });
+                }
+                
                 const openRouterKey = request.headers.get('X-OpenRouter-Key');
                 const language = request.headers.get('X-Note-Language') || 'en';
                 
@@ -203,6 +269,23 @@ export default {
                 return Response.json({ success: true, note, title }, { headers: corsHeaders });
             }
 
+            // POST /api/notes/quick - Generate quick note for last X minutes
+            if (path === '/api/notes/quick' && method === 'POST') {
+                let payload: { minutesBack: number };
+                try {
+                    payload = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
+                
+                if (!payload.minutesBack || payload.minutesBack < 1 || payload.minutesBack > 1440) {
+                    return Response.json({ error: 'minutesBack must be between 1 and 1440' }, { status: 400, headers: corsHeaders });
+                }
+                
+                const result = await handleGenerateQuickNote(payload, userId, env, request);
+                return Response.json(result, { headers: corsHeaders });
+            }
+
             // GET /api/config - Get user config
             if (path === '/api/config' && method === 'GET') {
                 const result = await handleGetConfig(userId, env);
@@ -211,7 +294,12 @@ export default {
 
             // PUT /api/config - Update user config
             if (path === '/api/config' && method === 'PUT') {
-                const config = await request.json() as Partial<UserConfig>;
+                let config: Partial<UserConfig>;
+                try {
+                    config = await request.json();
+                } catch {
+                    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+                }
                 const result = await handleUpdateConfig(config, userId, env);
                 return Response.json(result, { headers: corsHeaders });
             }

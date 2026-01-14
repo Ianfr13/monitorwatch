@@ -225,22 +225,55 @@ class ActivityMonitor {
     }
     
     private func getActiveWindowTitle() -> String? {
-        // Use Accessibility API to get window title
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         var focusedWindow: CFTypeRef?
         
-        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success else {
-            return nil
+        // Try to get focused window
+        let focusedResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+        
+        if focusedResult == .success, let window = focusedWindow {
+            // Try to get window title
+            var title: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success {
+                if let titleStr = title as? String, !titleStr.isEmpty {
+                    return titleStr
+                }
+            }
+            
+            // Fallback: try to get document name (some apps use this)
+            var document: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXDocumentAttribute as CFString, &document) == .success {
+                if let docStr = document as? String, !docStr.isEmpty {
+                    // Extract filename from path
+                    return (docStr as NSString).lastPathComponent
+                }
+            }
         }
         
-        var title: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success else {
-            return nil
+        // Fallback: try to get main window if focused window failed
+        var windows: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windows) == .success {
+            if let windowList = windows as? [AXUIElement], let firstWindow = windowList.first {
+                var title: CFTypeRef?
+                if AXUIElementCopyAttributeValue(firstWindow, kAXTitleAttribute as CFString, &title) == .success {
+                    if let titleStr = title as? String, !titleStr.isEmpty {
+                        return titleStr
+                    }
+                }
+                
+                // Try subrole or role description as last resort
+                var roleDesc: CFTypeRef?
+                if AXUIElementCopyAttributeValue(firstWindow, kAXRoleDescriptionAttribute as CFString, &roleDesc) == .success {
+                    if let roleStr = roleDesc as? String, !roleStr.isEmpty {
+                        return roleStr
+                    }
+                }
+            }
         }
         
-        return title as? String
+        return nil
     }
     
     private func extractURL(from windowTitle: String) -> String? {
