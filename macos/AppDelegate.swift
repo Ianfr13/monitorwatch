@@ -73,7 +73,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         toggleItem.tag = 101
         menu.addItem(toggleItem)
         
-        menu.addItem(NSMenuItem(title: "Generate Note Now", action: #selector(generateNoteNow), keyEquivalent: "g"))
+        // Quick Note submenu with time options
+        let quickNoteMenu = NSMenu()
+        quickNoteMenu.addItem(NSMenuItem(title: "Last 10 minutes", action: #selector(generateQuickNote10), keyEquivalent: ""))
+        quickNoteMenu.addItem(NSMenuItem(title: "Last 30 minutes", action: #selector(generateQuickNote30), keyEquivalent: ""))
+        quickNoteMenu.addItem(NSMenuItem(title: "Last 1 hour", action: #selector(generateQuickNote60), keyEquivalent: ""))
+        quickNoteMenu.addItem(NSMenuItem(title: "Last 2 hours", action: #selector(generateQuickNote120), keyEquivalent: ""))
+        
+        let quickNoteItem = NSMenuItem(title: "Generate Quick Note", action: nil, keyEquivalent: "g")
+        quickNoteItem.submenu = quickNoteMenu
+        menu.addItem(quickNoteItem)
+        
+        // Daily Note (for end of day)
+        menu.addItem(NSMenuItem(title: "Generate Daily Note", action: #selector(generateDailyNote), keyEquivalent: "d"))
         
         menu.addItem(NSMenuItem.separator())
         
@@ -128,7 +140,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
-    @objc private func generateNoteNow() {
+    @objc private func generateQuickNote10() { generateQuickNote(minutesBack: 10) }
+    @objc private func generateQuickNote30() { generateQuickNote(minutesBack: 30) }
+    @objc private func generateQuickNote60() { generateQuickNote(minutesBack: 60) }
+    @objc private func generateQuickNote120() { generateQuickNote(minutesBack: 120) }
+    
+    private func generateQuickNote(minutesBack: Int) {
+        showNotification(title: "MonitorWatch", message: "Generating note for last \(minutesBack) minutes...")
+        
+        Task {
+            do {
+                let result = try await CloudAPI.shared.generateQuickNote(minutesBack: minutesBack)
+                if result.success {
+                    showNotification(title: "Success", message: "Note generated: \(result.title)")
+                } else {
+                    showNotification(title: "Failed", message: "No data found for this period")
+                }
+            } catch {
+                showNotification(title: "Error", message: "Failed: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    @objc private func generateDailyNote() {
         showNotification(title: "MonitorWatch", message: "Generating daily note...")
         
         Task {

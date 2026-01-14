@@ -1,13 +1,35 @@
 import { Env, Activity, Transcript } from '../types';
 import { generateId } from '../utils';
 
+// Extract timezone offset in minutes from activity timestamps
+function extractTimezoneOffset(activities: Activity[]): number {
+    for (const activity of activities) {
+        const tzMatch = activity.timestamp.match(/([+-])(\d{2}):(\d{2})$/);
+        if (tzMatch) {
+            const sign = tzMatch[1] === '+' ? 1 : -1;
+            const tzHours = parseInt(tzMatch[2], 10);
+            const tzMins = parseInt(tzMatch[3], 10);
+            return sign * (tzHours * 60 + tzMins);
+        }
+    }
+    return 0; // Default to UTC if no timezone info
+}
+
+// Format current time in user's timezone
+function formatLocalNow(offsetMinutes: number): string {
+    const now = new Date();
+    const localTime = new Date(now.getTime() + offsetMinutes * 60 * 1000);
+    return localTime.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 // Summarize a chunk of activities/transcripts
 async function summarizeChunk(
     activities: Activity[],
     transcripts: Transcript[],
     apiKey: string,
     model: string,
-    language: string
+    language: string,
+    chunkMinutes: string
 ): Promise<string> {
     if (activities.length === 0 && transcripts.length === 0) {
         return '';
@@ -19,8 +41,8 @@ async function summarizeChunk(
     const transcriptText = transcripts.map(t => t.text).filter(Boolean).join('\n');
 
     const prompt = language === 'pt' 
-        ? buildPortugueseChunkPrompt(titles, ocrContent, transcriptText)
-        : buildEnglishChunkPrompt(titles, ocrContent, transcriptText);
+        ? buildPortugueseChunkPrompt(titles, ocrContent, transcriptText, chunkMinutes)
+        : buildEnglishChunkPrompt(titles, ocrContent, transcriptText, chunkMinutes);
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -44,8 +66,8 @@ async function summarizeChunk(
     return data.choices?.[0]?.message?.content || '';
 }
 
-function buildEnglishChunkPrompt(titles: string[], ocrContent: string, transcripts: string): string {
-    return `Analyze this 30-minute activity chunk and extract key information.
+function buildEnglishChunkPrompt(titles: string[], ocrContent: string, transcripts: string, chunkMinutes: string): string {
+    return `Analyze this 10-minute activity chunk (${chunkMinutes}) and extract key information.
 
 ## Window Titles
 ${titles.join('\n') || 'None'}
@@ -58,7 +80,7 @@ ${transcripts || 'None'}
 
 ---
 
-Extract and summarize in 2-3 paragraphs:
+Extract and summarize in 1-2 concise paragraphs:
 - What was being worked on or studied
 - Key topics, projects, or tasks
 - Important details, decisions, or learnings
@@ -76,8 +98,8 @@ Be specific and detailed. Use CORRECT app/tool names.
 Output only the summary, no headers or formatting.`;
 }
 
-function buildPortugueseChunkPrompt(titles: string[], ocrContent: string, transcripts: string): string {
-    return `Analise este chunk de 30 minutos de atividade e extraia informacoes chave.
+function buildPortugueseChunkPrompt(titles: string[], ocrContent: string, transcripts: string, chunkMinutes: string): string {
+    return `Analise este chunk de 10 minutos de atividade (${chunkMinutes}) e extraia informacoes chave.
 
 ## Titulos das Janelas
 ${titles.join('\n') || 'Nenhum'}
@@ -90,7 +112,7 @@ ${transcripts || 'Nenhum'}
 
 ---
 
-Extraia e resuma em 2-3 paragrafos:
+Extraia e resuma em 1-2 paragrafos concisos:
 - O que estava sendo trabalhado ou estudado
 - Topicos principais, projetos ou tarefas
 - Detalhes importantes, decisoes ou aprendizados
@@ -108,7 +130,7 @@ Seja especifico e detalhado. Use nomes CORRETOS de apps/ferramentas.
 Retorne apenas o resumo, sem cabecalhos ou formatacao.`;
 }
 
-// Process a specific hour: get activities, split into 2 chunks of 30min, summarize
+// Process a specific hour: get activities, split into 6 chunks of 10min each, summarize
 export async function processHourlySummary(
     userId: string,
     date: string,
@@ -127,46 +149,71 @@ export async function processHourlySummary(
         return existing.summary;
     }
 
-    // Get activities for this hour
-    const hourStart = `${date}T${hour.toString().padStart(2, '0')}:00:00`;
-    const hourEnd = `${date}T${hour.toString().padStart(2, '0')}:59:59`;
-    const midPoint = `${date}T${hour.toString().padStart(2, '0')}:30:00`;
+    // Get activities for this hour using local_date and local_hour for timezone-correct filtering
+    // Falls back to UTC-based strftime for backward compatibility with old data
+    const hourStr = hour.toString().padStart(2, '0');
 
     const activitiesResult = await env.DB.prepare(`
         SELECT * FROM activities 
-        WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+        WHERE user_id = ? 
+        AND (
+            (local_date = ? AND local_hour = ?)
+            OR (local_date IS NULL AND date(timestamp) = ? AND strftime('%H', timestamp) = ?)
+        )
         ORDER BY timestamp ASC
-    `).bind(userId, hourStart, hourEnd).all();
+    `).bind(userId, date, hour, date, hourStr).all();
     const activities = (activitiesResult.results || []) as unknown as Activity[];
 
     const transcriptsResult = await env.DB.prepare(`
         SELECT * FROM transcripts 
-        WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+        WHERE user_id = ? 
+        AND (
+            (local_date = ? AND local_hour = ?)
+            OR (local_date IS NULL AND date(timestamp) = ? AND strftime('%H', timestamp) = ?)
+        )
         ORDER BY timestamp ASC
-    `).bind(userId, hourStart, hourEnd).all();
+    `).bind(userId, date, hour, date, hourStr).all();
     const transcripts = (transcriptsResult.results || []) as unknown as Transcript[];
 
     if (activities.length === 0 && transcripts.length === 0) {
         return '';
     }
 
-    // Split into 2 chunks of 30min
-    const chunk1Activities = activities.filter(a => a.timestamp < midPoint);
-    const chunk2Activities = activities.filter(a => a.timestamp >= midPoint);
-    const chunk1Transcripts = transcripts.filter(t => t.timestamp < midPoint);
-    const chunk2Transcripts = transcripts.filter(t => t.timestamp >= midPoint);
+    // Helper to extract minute from timestamp
+    const getMinute = (timestamp: string): number => {
+        return parseInt(timestamp.substring(14, 16) || '0');
+    };
+
+    // Split into 6 chunks of 10min each (00-09, 10-19, 20-29, 30-39, 40-49, 50-59)
+    const chunkRanges = [
+        { start: 0, end: 9, label: ':00-:09' },
+        { start: 10, end: 19, label: ':10-:19' },
+        { start: 20, end: 29, label: ':20-:29' },
+        { start: 30, end: 39, label: ':30-:39' },
+        { start: 40, end: 49, label: ':40-:49' },
+        { start: 50, end: 59, label: ':50-:59' },
+    ];
 
     // Summarize each chunk
     const summaries: string[] = [];
     
-    if (chunk1Activities.length > 0 || chunk1Transcripts.length > 0) {
-        const summary1 = await summarizeChunk(chunk1Activities, chunk1Transcripts, apiKey, model, language);
-        if (summary1) summaries.push(summary1);
-    }
-    
-    if (chunk2Activities.length > 0 || chunk2Transcripts.length > 0) {
-        const summary2 = await summarizeChunk(chunk2Activities, chunk2Transcripts, apiKey, model, language);
-        if (summary2) summaries.push(summary2);
+    for (const range of chunkRanges) {
+        const chunkActivities = activities.filter(a => {
+            const minute = getMinute(a.timestamp);
+            return minute >= range.start && minute <= range.end;
+        });
+        const chunkTranscripts = transcripts.filter(t => {
+            const minute = getMinute(t.timestamp);
+            return minute >= range.start && minute <= range.end;
+        });
+
+        if (chunkActivities.length > 0 || chunkTranscripts.length > 0) {
+            const chunkMinutes = `${hourStr}${range.label}`;
+            const summary = await summarizeChunk(chunkActivities, chunkTranscripts, apiKey, model, language, chunkMinutes);
+            if (summary) {
+                summaries.push(`**${chunkMinutes}**: ${summary}`);
+            }
+        }
     }
 
     const combinedSummary = summaries.join('\n\n');
@@ -209,13 +256,13 @@ export async function processAllHoursForDate(
     model: string = 'google/gemini-2.0-flash-001',
     language: string = 'en'
 ): Promise<number> {
-    // Find which hours have data
+    // Find which hours have data (use local_hour when available)
     const hoursResult = await env.DB.prepare(`
-        SELECT DISTINCT CAST(strftime('%H', timestamp) AS INTEGER) as hour
+        SELECT DISTINCT COALESCE(local_hour, CAST(strftime('%H', timestamp) AS INTEGER)) as hour
         FROM activities 
-        WHERE user_id = ? AND date(timestamp) = ?
+        WHERE user_id = ? AND (local_date = ? OR (local_date IS NULL AND date(timestamp) = ?))
         ORDER BY hour
-    `).bind(userId, date).all();
+    `).bind(userId, date, date).all();
 
     const hours = (hoursResult.results || []).map((r: any) => r.hour as number);
     let processed = 0;
@@ -246,22 +293,29 @@ export async function generateHourNote(
     model: string = 'google/gemini-2.0-flash-001',
     language: string = 'en'
 ): Promise<{ note: string; title: string }> {
-    // Get activities for this hour
-    const hourStart = `${date}T${hour.toString().padStart(2, '0')}:00:00`;
-    const hourEnd = `${date}T${hour.toString().padStart(2, '0')}:59:59`;
+    // Get activities for this hour using local_date and local_hour for timezone-correct filtering
+    const hourStr = hour.toString().padStart(2, '0');
 
     const activitiesResult = await env.DB.prepare(`
         SELECT * FROM activities 
-        WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+        WHERE user_id = ? 
+        AND (
+            (local_date = ? AND local_hour = ?)
+            OR (local_date IS NULL AND date(timestamp) = ? AND strftime('%H', timestamp) = ?)
+        )
         ORDER BY timestamp ASC
-    `).bind(userId, hourStart, hourEnd).all();
+    `).bind(userId, date, hour, date, hourStr).all();
     const activities = (activitiesResult.results || []) as unknown as Activity[];
 
     const transcriptsResult = await env.DB.prepare(`
         SELECT * FROM transcripts 
-        WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+        WHERE user_id = ? 
+        AND (
+            (local_date = ? AND local_hour = ?)
+            OR (local_date IS NULL AND date(timestamp) = ? AND strftime('%H', timestamp) = ?)
+        )
         ORDER BY timestamp ASC
-    `).bind(userId, hourStart, hourEnd).all();
+    `).bind(userId, date, hour, date, hourStr).all();
     const transcripts = (transcriptsResult.results || []) as unknown as Transcript[];
 
     if (activities.length === 0 && transcripts.length === 0) {
@@ -272,10 +326,13 @@ export async function generateHourNote(
     const titles = [...new Set(activities.map(a => a.window_title).filter(Boolean))];
     const ocrContent = activities.map(a => a.ocr_text).filter(Boolean).join('\n');
     const transcriptText = transcripts.map(t => t.text).filter(Boolean).join('\n');
+    
+    // Extract timezone offset from activities for proper time formatting
+    const tzOffsetMinutes = extractTimezoneOffset(activities);
 
     const prompt = language === 'pt'
-        ? buildPortugueseHourNotePrompt(date, hour, titles, ocrContent, transcriptText, vaultNotes)
-        : buildEnglishHourNotePrompt(date, hour, titles, ocrContent, transcriptText, vaultNotes);
+        ? buildPortugueseHourNotePrompt(date, hour, titles, ocrContent, transcriptText, vaultNotes, tzOffsetMinutes)
+        : buildEnglishHourNotePrompt(date, hour, titles, ocrContent, transcriptText, vaultNotes, tzOffsetMinutes);
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -324,10 +381,11 @@ function buildEnglishHourNotePrompt(
     titles: string[],
     ocrContent: string,
     transcripts: string,
-    vaultNotes: string[]
+    vaultNotes: string[],
+    tzOffsetMinutes: number = 0
 ): string {
     const hourStr = `${hour.toString().padStart(2, '0')}:00`;
-    const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const generatedAt = formatLocalNow(tzOffsetMinutes);
     const vaultNotesStr = vaultNotes.length > 0 
         ? vaultNotes.join(', ')
         : 'None available';
@@ -396,10 +454,11 @@ function buildPortugueseHourNotePrompt(
     titles: string[],
     ocrContent: string,
     transcripts: string,
-    vaultNotes: string[]
+    vaultNotes: string[],
+    tzOffsetMinutes: number = 0
 ): string {
     const hourStr = `${hour.toString().padStart(2, '0')}:00`;
-    const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const generatedAt = formatLocalNow(tzOffsetMinutes);
     const vaultNotesStr = vaultNotes.length > 0 
         ? vaultNotes.join(', ')
         : 'Nenhuma disponivel';

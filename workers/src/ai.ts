@@ -45,6 +45,27 @@ async function callOpenRouter(prompt: string, apiKey: string, model: string): Pr
 }
 
 
+// Extract timezone offset in minutes from activity timestamps
+function extractTimezoneOffset(activities: Activity[]): number {
+    for (const activity of activities) {
+        const tzMatch = activity.timestamp.match(/([+-])(\d{2}):(\d{2})$/);
+        if (tzMatch) {
+            const sign = tzMatch[1] === '+' ? 1 : -1;
+            const tzHours = parseInt(tzMatch[2], 10);
+            const tzMins = parseInt(tzMatch[3], 10);
+            return sign * (tzHours * 60 + tzMins);
+        }
+    }
+    return 0;
+}
+
+// Format current time in user's timezone
+function formatLocalNow(offsetMinutes: number): string {
+    const now = new Date();
+    const localTime = new Date(now.getTime() + offsetMinutes * 60 * 1000);
+    return localTime.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 export async function generateNoteWithAI(
     activities: Activity[],
     transcripts: Transcript[],
@@ -57,19 +78,22 @@ export async function generateNoteWithAI(
     const language = aiConfig?.language || 'en';
     const model = aiConfig?.model || 'google/gemini-2.0-flash-001';
     const apiKey = aiConfig?.openRouterKey || '';
+    
+    // Extract timezone offset from activities
+    const tzOffsetMinutes = extractTimezoneOffset(activities);
 
     // If we have pre-processed hourly summaries, use them
     if (hourlySummaries && hourlySummaries.length > 0) {
-        const prompt = buildPromptFromSummaries(hourlySummaries, date, language, noteNumber);
+        const prompt = buildPromptFromSummaries(hourlySummaries, date, language, noteNumber, tzOffsetMinutes);
         return await callOpenRouter(prompt, apiKey, model);
     }
 
     // Fallback to raw data
-    const prompt = buildPrompt(activities, transcripts, date, language, noteNumber);
+    const prompt = buildPrompt(activities, transcripts, date, language, noteNumber, tzOffsetMinutes);
     return await callOpenRouter(prompt, apiKey, model);
 }
 
-function buildPromptFromSummaries(summaries: { hour: number; summary: string }[], date: string, language: string, noteNumber?: number): string {
+function buildPromptFromSummaries(summaries: { hour: number; summary: string }[], date: string, language: string, noteNumber?: number, tzOffsetMinutes: number = 0): string {
     const locale = language === 'pt' ? 'pt-BR' : 'en-US';
     const formattedDate = new Date(date).toLocaleDateString(locale);
 
@@ -80,13 +104,13 @@ function buildPromptFromSummaries(summaries: { hour: number; summary: string }[]
     }
 
     if (language === 'pt') {
-        return buildPortuguesePromptFromSummaries(formattedDate, summariesText, noteNumber);
+        return buildPortuguesePromptFromSummaries(formattedDate, summariesText, noteNumber, tzOffsetMinutes);
     }
-    return buildEnglishPromptFromSummaries(formattedDate, summariesText, noteNumber);
+    return buildEnglishPromptFromSummaries(formattedDate, summariesText, noteNumber, tzOffsetMinutes);
 }
 
-function buildEnglishPromptFromSummaries(formattedDate: string, summariesText: string, noteNumber?: number): string {
-    const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+function buildEnglishPromptFromSummaries(formattedDate: string, summariesText: string, noteNumber?: number, tzOffsetMinutes: number = 0): string {
+    const generatedAt = formatLocalNow(tzOffsetMinutes);
     const noteNumberStr = noteNumber ? ` #${noteNumber}` : '';
     
     return `
@@ -155,8 +179,8 @@ NOT generic like "Daily Log" or "Diary".
 `;
 }
 
-function buildPortuguesePromptFromSummaries(formattedDate: string, summariesText: string, noteNumber?: number): string {
-    const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+function buildPortuguesePromptFromSummaries(formattedDate: string, summariesText: string, noteNumber?: number, tzOffsetMinutes: number = 0): string {
+    const generatedAt = formatLocalNow(tzOffsetMinutes);
     const noteNumberStr = noteNumber ? ` #${noteNumber}` : '';
     
     return `
@@ -225,7 +249,7 @@ Gere apenas o conteúdo Markdown abaixo, sem conversas.
 `;
 }
 
-function buildPrompt(activities: Activity[], transcripts: Transcript[], date: string, language: string, noteNumber?: number): string {
+function buildPrompt(activities: Activity[], transcripts: Transcript[], date: string, language: string, noteNumber?: number, tzOffsetMinutes: number = 0): string {
     const locale = language === 'pt' ? 'pt-BR' : 'en-US';
     const formattedDate = new Date(date).toLocaleDateString(locale);
 

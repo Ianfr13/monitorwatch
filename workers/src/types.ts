@@ -16,6 +16,8 @@ export interface Activity {
     id: string;
     user_id: string;
     timestamp: string;
+    local_date: string;      // YYYY-MM-DD in user's timezone
+    local_hour: number;      // 0-23 in user's timezone
     app_bundle_id: string;
     app_name: string;
     window_title: string;
@@ -27,6 +29,8 @@ export interface Transcript {
     id: string;
     user_id: string;
     timestamp: string;
+    local_date: string;      // YYYY-MM-DD in user's timezone
+    local_hour: number;      // 0-23 in user's timezone
     text: string;
     source: string;
     duration_seconds: number;
@@ -53,6 +57,8 @@ export interface UserConfig {
 
 export interface ActivityPayload {
     timestamp: string;
+    local_date?: string;     // YYYY-MM-DD in user's timezone (optional for backward compat)
+    local_hour?: number;     // 0-23 in user's timezone (optional for backward compat)
     app_bundle_id: string;
     app_name: string;
     window_title: string;
@@ -63,6 +69,8 @@ export interface ActivityPayload {
 
 export interface TranscriptPayload {
     timestamp: string;
+    local_date?: string;     // YYYY-MM-DD in user's timezone (optional for backward compat)
+    local_hour?: number;     // 0-23 in user's timezone (optional for backward compat)
     text: string;
     source: string;
     duration_seconds: number;

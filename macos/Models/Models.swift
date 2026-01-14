@@ -185,23 +185,40 @@ struct UserConfig: Codable {
     // The "Brain" - Intelligent Decision Matrix
     static func determineCaptureMode(for bundleId: String, context: String, profile: PerformanceProfile) -> CaptureMode {
         let text = context.lowercased()
+        let bundle = bundleId.lowercased()
         
         // 1. Always Ignore / Privacy (Hardcoded safety)
-        if text.contains("password") || text.contains("bank") || bundleId.contains("1password") {
+        if text.contains("password") || text.contains("bank") || bundle.contains("1password") {
             return .ignore
         }
         
         // 2. Meetings (Always Audio if profile > low, or explicit in Low)
-        let isMeeting = text.contains("zoom") || text.contains("meet.google") || text.contains("teams")
+        let isMeeting = text.contains("zoom") || text.contains("meet.google") || text.contains("teams") ||
+                        bundle.contains("zoom") || bundle.contains("teams") || bundle.contains("webex") ||
+                        bundle.contains("facetime") || bundle.contains("discord")
         if isMeeting {
             return .audio
         }
         
         // 3. Videos / Passive
-        let isVideo = text.contains("youtube") || text.contains("netflix") || text.contains("twitch") || text.contains("spotify")
+        let isVideo = text.contains("youtube") || text.contains("netflix") || text.contains("twitch") || text.contains("spotify") ||
+                      bundle.contains("spotify") || bundle.contains("music") || bundle.contains("tv.apple")
         
-        // 4. Work / Research
-        let isWork = text.contains("comet") || text.contains("github") || text.contains("vscode") || text.contains("figma") || text.contains("chatgpt") || text.contains("claude") || text.contains("stack overflow")
+        // 4. Work / Research - check both context AND bundleId
+        let isWorkByContext = text.contains("comet") || text.contains("github") || text.contains("vscode") || 
+                              text.contains("figma") || text.contains("chatgpt") || text.contains("claude") || 
+                              text.contains("stack overflow") || text.contains("opencode") || text.contains("cursor")
+        
+        let isWorkByBundle = bundle.contains("vscode") || bundle.contains("code") || bundle.contains("xcode") ||
+                             bundle.contains("terminal") || bundle.contains("iterm") || bundle.contains("warp") ||
+                             bundle.contains("figma") || bundle.contains("sketch") || bundle.contains("notion") ||
+                             bundle.contains("obsidian") || bundle.contains("sublime") || bundle.contains("jetbrains") ||
+                             bundle.contains("intellij") || bundle.contains("webstorm") || bundle.contains("pycharm") ||
+                             bundle.contains("comet") || bundle.contains("opencode") || bundle.contains("cursor") ||
+                             bundle.contains("chrome") || bundle.contains("safari") || bundle.contains("firefox") ||
+                             bundle.contains("arc") || bundle.contains("brave") || bundle.contains("edge")
+        
+        let isWork = isWorkByContext || isWorkByBundle
         
         
         // --- Decision Matrix ---
@@ -238,6 +255,8 @@ struct UserConfig: Codable {
 
 struct ActivityPayload: Codable {
     let timestamp: String
+    let localDate: String      // YYYY-MM-DD in user's timezone
+    let localHour: Int         // 0-23 in user's timezone
     let appBundleId: String
     let appName: String
     let windowTitle: String
@@ -246,6 +265,8 @@ struct ActivityPayload: Codable {
     
     enum CodingKeys: String, CodingKey {
         case timestamp
+        case localDate = "local_date"
+        case localHour = "local_hour"
         case appBundleId = "app_bundle_id"
         case appName = "app_name"
         case windowTitle = "window_title"
@@ -256,12 +277,16 @@ struct ActivityPayload: Codable {
 
 struct TranscriptPayload: Codable {
     let timestamp: String
+    let localDate: String      // YYYY-MM-DD in user's timezone
+    let localHour: Int         // 0-23 in user's timezone
     let text: String
     let source: String
     let durationSeconds: Int
     
     enum CodingKeys: String, CodingKey {
         case timestamp
+        case localDate = "local_date"
+        case localHour = "local_hour"
         case text
         case source
         case durationSeconds = "duration_seconds"
